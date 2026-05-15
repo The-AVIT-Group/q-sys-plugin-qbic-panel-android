@@ -40,7 +40,13 @@ jobs:
 
       - name: Create install zip
         run: |
-          zip QbicControl-${{ github.ref_name }}.zip \
+          set -e
+          for f in QbicControl.apk commission_panel.ps1 \
+                    privapp-permissions-qbiccontrol.xml \
+                    qbiccontrol-permissions.xml INSTALL.md; do
+            [ -f "$f" ] || { echo "ERROR: $f not found"; exit 1; }
+          done
+          zip "QbicControl-${{ github.ref_name }}.zip" \
             QbicControl.apk \
             commission_panel.ps1 \
             privapp-permissions-qbiccontrol.xml \

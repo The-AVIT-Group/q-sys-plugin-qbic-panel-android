@@ -5,7 +5,7 @@
 - A Windows PC
 - A USB cable connecting your PC to the panel
 - The panel's IP address (for verification after install)
-- `QbicControl-vX.X.X.zip` downloaded from the release page and extracted into a single folder
+- The latest [`QbicControl-vX.X.X.zip`](https://github.com/The-AVIT-Group/q-sys-plugin-qbic-panel-android/releases/latest) from the GitHub Releases page (replace `X.X.X` with the actual version number), extracted into a single folder
 
 ## Step 1 — Install ADB (one-time setup, ~2 minutes)
 

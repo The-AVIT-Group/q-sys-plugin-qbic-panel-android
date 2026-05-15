@@ -1,14 +1,12 @@
 package au.com.theavitgroup.qbiccontrol
 
+import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.util.Log
 import org.json.JSONObject
-import android.hardware.input.InputManager
-import android.os.SystemClock
-import android.view.KeyEvent
 
 /**
  * Parses incoming JSON commands and dispatches them to the appropriate controller.
@@ -18,7 +16,7 @@ import android.view.KeyEvent
  * LED:    {"cmd":"led",    "location":"FRONT_SIDE", "color":"FF0000"}
  * Screen: {"cmd":"screen", "state":"on"}   or  {"cmd":"screen","state":"off"}
  * Launch: {"cmd":"launch", "package":"au.com.theavitgroup.app"}
- * Home:   {"cmd":"home"}                   →  {"ok":true}  (requires su, userdebug firmware)
+ * Home:   {"cmd":"home"}                   →  {"ok":true}  (requires accessibility service enabled)
  * Status: {"cmd":"status"}
  * Sensor: {"cmd":"sensor"}
  * Camera: {"cmd":"camera"}                →  {"ok":true,"streaming":<bool>,"port":9091}
@@ -71,20 +69,10 @@ class CommandHandler(
         ok()
       }
       "home" -> {
-        try {
-          val im = context.getSystemService(Context.INPUT_SERVICE) as InputManager
-          val inject = InputManager::class.java.getMethod(
-            "injectInputEvent",
-            android.view.InputEvent::class.java,
-            Int::class.java
-          )
-          val now = SystemClock.uptimeMillis()
-          inject.invoke(im, KeyEvent(now, now, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_HOME, 0), 0)
-          inject.invoke(im, KeyEvent(now, now, KeyEvent.ACTION_UP,   KeyEvent.KEYCODE_HOME, 0), 0)
-          ok()
-        } catch (e: Exception) {
-          error("home inject failed: ${e.message}")
-        }
+        val svc = ScreenCaptureService.instance
+          ?: return error("home failed: accessibility service not connected")
+        if (svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)) ok()
+        else error("home failed: performGlobalAction returned false")
       }
       "status" -> JSONObject()
         .put("ok", true)

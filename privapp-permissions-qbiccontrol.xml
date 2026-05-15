@@ -3,7 +3,5 @@
     <privapp-permissions package="au.com.theavitgroup.qbiccontrol">
         <!-- Required for BootActivity to show a transparent overlay during camera init -->
         <permission name="android.permission.SYSTEM_ALERT_WINDOW"/>
-        <!-- Required for HomeBtn to inject the HOME keyevent via InputManager -->
-        <permission name="android.permission.INJECT_EVENTS"/>
     </privapp-permissions>
 </permissions>

@@ -37,12 +37,6 @@
            au.com.theavitgroup.qbiccontrol/.DeviceAdminReceiver -->
   <uses-permission android:name="android.permission.BIND_DEVICE_ADMIN" />
 
-  <!-- Inject input events (HOME keyevent) — signature|privileged permission.
-       Granted automatically because the APK lives in /system/priv-app/, but only
-       after the package is listed in a privapp-permissions whitelist XML at
-       /system/etc/permissions/privapp-permissions-qbiccontrol.xml. -->
-  <uses-permission android:name="android.permission.INJECT_EVENTS" />
-
   <!-- Usage stats — to detect when the kiosk browser (com.qbic.smilplayer) is
        in the foreground. Grant at device setup:
        adb shell appops set au.com.theavitgroup.qbiccontrol PACKAGE_USAGE_STATS allow -->

@@ -152,107 +152,81 @@ Write-Host "APK: $Apk"
 Step "Gaining root access"
 $rootOut = & adb root 2>&1
 $IsRooted = ($rootOut -notmatch "cannot run as root in production builds")
+$HasSu    = $false
 if ($IsRooted) {
     Write-Host "ADB running as root."
     Start-Sleep -Seconds 3
 } else {
-    Write-Host "Production build — ADB root unavailable; using 'su 0' for privileged operations." -ForegroundColor Yellow
+    Write-Host "ADB root unavailable — checking for su..." -ForegroundColor Yellow
+    $suTest = "exit 0" | & adb.exe shell su 0 2>&1
+    $HasSu  = ($LASTEXITCODE -eq 0)
+    if ($HasSu) {
+        Write-Host "  su available — using 'su 0' for privileged operations." -ForegroundColor Yellow
+    } else {
+        Write-Host "  No su — installing as user app (home button uses accessibility service)." -ForegroundColor Yellow
+    }
 }
 
-Step "Remounting /system as writable"
-if ($IsRooted) {
-    Adb "remount"
-} else {
-    SuShell "mount -o rw,remount /system"
-}
-Start-Sleep -Seconds 2
+if ($IsRooted -or $HasSu) {
 
-# ── Install to priv-app ───────────────────────────────────────────────────────
+    # ── Remount ───────────────────────────────────────────────────────────────
 
-Step "Installing APK to /system/priv-app/"
-# Remove existing APK first — overlayfs needs free space for the new file;
-# leaving the old file in place can cause "No space left on device".
-SuShell "rm -rf /system/priv-app/QbicControl"
-SuShell "mkdir -p /system/priv-app/QbicControl"
-PushToSystem $Apk $PrivAppDst
-SuShell "chmod 644 $PrivAppDst"
-SuShell "chown root:root $PrivAppDst"
-Write-Host "Installed: $PrivAppDst"
+    Step "Remounting /system as writable"
+    if ($IsRooted) { Adb "remount" } else { SuShell "mount -o rw,remount /system" }
+    Start-Sleep -Seconds 2
 
-# ── privapp-permissions XML ───────────────────────────────────────────────────
+    # ── Install to priv-app ───────────────────────────────────────────────────
 
-Step "Writing privapp-permissions XML (SYSTEM_ALERT_WINDOW + INJECT_EVENTS)"
-if (-not (Test-Path $PrivPermLocal)) {
-    Write-Host "privapp-permissions-qbiccontrol.xml not found next to script: $PrivPermLocal" -ForegroundColor Red
-    exit 1
-}
-PushToSystem $PrivPermLocal $PrivPermDst
-SuShell "chmod 644 $PrivPermDst"
-SuShell "chown root:root $PrivPermDst"
-Write-Host "Written: $PrivPermDst"
+    Step "Installing APK to /system/priv-app/"
+    # Remove existing APK first — overlayfs needs free space for the new file;
+    # leaving the old file in place can cause "No space left on device".
+    SuShell "rm -rf /system/priv-app/QbicControl"
+    SuShell "mkdir -p /system/priv-app/QbicControl"
+    PushToSystem $Apk $PrivAppDst
+    SuShell "chmod 644 $PrivAppDst"
+    SuShell "chown root:root $PrivAppDst"
+    Write-Host "Installed: $PrivAppDst"
 
-# ── sysconfig exceptions XML ──────────────────────────────────────────────────
+    # ── privapp-permissions XML ───────────────────────────────────────────────
 
-Step "Writing sysconfig exceptions XML (CAMERA auto-revoke exemption)"
-if (-not (Test-Path $SysConfigLocal)) {
-    Write-Host "qbiccontrol-permissions.xml not found next to script: $SysConfigLocal" -ForegroundColor Red
-    exit 1
-}
-PushToSystem $SysConfigLocal $SysConfigDst
-SuShell "chmod 644 $SysConfigDst"
-SuShell "chown root:root $SysConfigDst"
-Write-Host "Written: $SysConfigDst"
+    Step "Writing privapp-permissions XML (SYSTEM_ALERT_WINDOW)"
+    if (-not (Test-Path $PrivPermLocal)) {
+        Write-Host "privapp-permissions-qbiccontrol.xml not found: $PrivPermLocal" -ForegroundColor Red
+        exit 1
+    }
+    PushToSystem $PrivPermLocal $PrivPermDst
+    SuShell "chmod 644 $PrivPermDst"
+    SuShell "chown root:root $PrivPermDst"
+    Write-Host "Written: $PrivPermDst"
 
-# ── Clear device admin before reboot ─────────────────────────────────────────
-# DevicePolicyManager stores admin state in device_policies.xml; deleting it
-# before reboot clears admin so the user-installed copy can be uninstalled after
-# reboot without hitting DELETE_FAILED_DEVICE_POLICY_MANAGER.
+    # ── sysconfig exceptions XML ──────────────────────────────────────────────
 
-Step "Clearing device admin state (device_policies.xml)"
-"rm -f /data/system/device_policies.xml" | & adb.exe shell su 0
-Write-Host "Device policies cleared — admin will be reset on reboot."
+    Step "Writing sysconfig exceptions XML (CAMERA auto-revoke exemption)"
+    if (-not (Test-Path $SysConfigLocal)) {
+        Write-Host "qbiccontrol-permissions.xml not found: $SysConfigLocal" -ForegroundColor Red
+        exit 1
+    }
+    PushToSystem $SysConfigLocal $SysConfigDst
+    SuShell "chmod 644 $SysConfigDst"
+    SuShell "chown root:root $SysConfigDst"
+    Write-Host "Written: $SysConfigDst"
 
-# ── Reboot ────────────────────────────────────────────────────────────────────
+    # ── Clear device admin before reboot ─────────────────────────────────────
+    # DevicePolicyManager stores admin state in device_policies.xml; deleting it
+    # before reboot clears admin so the user-installed copy can be uninstalled after
+    # reboot without hitting DELETE_FAILED_DEVICE_POLICY_MANAGER.
 
-Step "Rebooting device"
-& adb reboot
-Write-Host "Waiting for device to come back online..."
-& adb wait-for-device
+    Step "Clearing device admin state (device_policies.xml)"
+    SuShell "rm -f /data/system/device_policies.xml"
+    Write-Host "Device policies cleared — admin will be reset on reboot."
 
-# wait for boot to fully complete (sys.boot_completed = 1)
-Write-Host "Waiting for boot to complete..."
-$booted = $false
-for ($i = 0; $i -lt 60; $i++) {
-    Start-Sleep -Seconds 3
-    $val = & adb shell getprop sys.boot_completed 2>$null
-    if ($val -match "1") { $booted = $true; break }
-}
-if (-not $booted) {
-    Write-Host "Boot timed out — continuing anyway, some steps may fail." -ForegroundColor Yellow
-}
-# Give system services a moment to settle
-Start-Sleep -Seconds 5
+    # ── Reboot ────────────────────────────────────────────────────────────────
 
-# Re-root after reboot (some builds drop root on reboot)
-& adb root | Out-Null
-Start-Sleep -Seconds 2
-
-# ── Remove user-installed copy if it shadows the system version ───────────────
-
-Step "Checking for user-installed copy that would shadow system priv-app"
-$pmPath = & adb shell pm path $Package 2>$null
-if ($pmPath -match "/data/app") {
-    Write-Host "User-installed copy found — uninstalling to expose system version..." -ForegroundColor Yellow
-    Adb "uninstall",$Package
-    Write-Host "Uninstalled user copy."
-
-    # Reboot so PackageManager scans priv-app cleanly and grants privapp permissions.
-    # Without this reboot the privapp permission XML is not applied (PM already
-    # made its decisions at the first boot when the user copy was still present).
-    Step "Rebooting to apply priv-app permission grants"
+    Step "Rebooting device"
     & adb reboot
     Write-Host "Waiting for device to come back online..."
     & adb wait-for-device
+
     Write-Host "Waiting for boot to complete..."
     $booted = $false
     for ($i = 0; $i -lt 60; $i++) {
@@ -261,13 +235,53 @@ if ($pmPath -match "/data/app") {
         if ($val -match "1") { $booted = $true; break }
     }
     if (-not $booted) {
-        Write-Host "Boot timed out — continuing anyway." -ForegroundColor Yellow
+        Write-Host "Boot timed out — continuing anyway, some steps may fail." -ForegroundColor Yellow
     }
     Start-Sleep -Seconds 5
     & adb root | Out-Null
     Start-Sleep -Seconds 2
+
+    # ── Remove user-installed copy if it shadows the system version ───────────
+
+    Step "Checking for user-installed copy that would shadow system priv-app"
+    $pmPath = & adb shell pm path $Package 2>$null
+    if ($pmPath -match "/data/app") {
+        Write-Host "User-installed copy found — uninstalling to expose system version..." -ForegroundColor Yellow
+        Adb "uninstall",$Package
+        Write-Host "Uninstalled user copy."
+
+        # Reboot so PackageManager scans priv-app cleanly and grants privapp permissions.
+        Step "Rebooting to apply priv-app permission grants"
+        & adb reboot
+        Write-Host "Waiting for device to come back online..."
+        & adb wait-for-device
+        Write-Host "Waiting for boot to complete..."
+        $booted = $false
+        for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 3
+            $val = & adb shell getprop sys.boot_completed 2>$null
+            if ($val -match "1") { $booted = $true; break }
+        }
+        if (-not $booted) {
+            Write-Host "Boot timed out — continuing anyway." -ForegroundColor Yellow
+        }
+        Start-Sleep -Seconds 5
+        & adb root | Out-Null
+        Start-Sleep -Seconds 2
+    } else {
+        Write-Host "No user-installed copy found — system version is active."
+    }
+
 } else {
-    Write-Host "No user-installed copy found — system version is active."
+
+    # ── No root / no su: install as user app ─────────────────────────────────
+    # SYSTEM_ALERT_WINDOW is granted via appops below (persists across reboots).
+    # Home button uses the accessibility service (no INJECT_EVENTS needed).
+
+    Step "Installing APK as user app"
+    Adb "install","-r",$Apk
+    Write-Host "Installed as user app."
+
 }
 
 # ── Grant permissions ─────────────────────────────────────────────────────────

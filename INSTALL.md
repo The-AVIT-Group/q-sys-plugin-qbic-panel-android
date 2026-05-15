@@ -5,11 +5,7 @@
 - A Windows PC
 - A USB cable connecting your PC to the panel
 - The panel's IP address (for verification after install)
-- All 4 files from this release in the same folder:
-  - `QbicControl.apk`
-  - `commission_panel.ps1`
-  - `privapp-permissions-qbiccontrol.xml`
-  - `qbiccontrol-permissions.xml`
+- `QbicControl-vX.X.X.zip` downloaded from the release page and extracted into a single folder
 
 ## Step 1 — Install ADB (one-time setup, ~2 minutes)
 
@@ -31,7 +27,7 @@ On the panel touchscreen:
 ## Step 3 — Connect and commission
 
 Plug the USB cable from your PC into the panel, then in PowerShell navigate to the
-folder containing the 4 files and run:
+folder containing the extracted files and run:
 
 ```powershell
 .\commission_panel.ps1

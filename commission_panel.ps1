@@ -98,29 +98,6 @@ function Step {
     Write-Host "==> $Msg" -ForegroundColor Cyan
 }
 
-# Run a shell command as root — via direct adb shell (rooted adbd) or su 0 (production build).
-function SuShell {
-    param([string]$Cmd)
-    if ($script:IsRooted) {
-        & adb.exe shell $Cmd
-    } else {
-        $Cmd | & adb.exe shell su 0
-    }
-    if ($LASTEXITCODE -ne 0) { throw "su: $Cmd failed (exit $LASTEXITCODE)" }
-}
-
-# Push a local file to a /system path — directly (rooted) or via /sdcard staging (production build).
-function PushToSystem {
-    param([string]$Local, [string]$Remote)
-    if ($script:IsRooted) {
-        Adb "push",$Local,$Remote
-    } else {
-        $leaf = [System.IO.Path]::GetFileName($Local)
-        $tmp  = "/sdcard/$leaf"
-        Adb "push",$Local,$tmp
-        SuShell "cp $tmp $Remote && rm $tmp"
-    }
-}
 
 # ── Connect ──────────────────────────────────────────────────────────────────
 
@@ -152,57 +129,32 @@ Write-Host "APK: $Apk"
 Step "Gaining root access"
 $rootOut = & adb root 2>&1
 $IsRooted = ($rootOut -notmatch "cannot run as root in production builds")
-$HasSu    = $false
 if ($IsRooted) {
     Write-Host "ADB running as root."
     Start-Sleep -Seconds 3
 } else {
-    Write-Host "ADB root unavailable — checking for su..." -ForegroundColor Yellow
-    $suTest = "exit 0" | & adb.exe shell su 0 2>&1
-    $HasSu  = ($LASTEXITCODE -eq 0)
-    if ($HasSu) {
-        Write-Host "  su available — using 'su 0' for privileged operations." -ForegroundColor Yellow
-    } else {
-        Write-Host "  No su — installing as user app (home button uses accessibility service)." -ForegroundColor Yellow
-    }
+    # adb remount uses overlayfs and disables dm-verity; plain su mount bypasses
+    # that protection and risks a dm-verity boot failure. Only use priv-app
+    # installation when adb root succeeded.
+    Write-Host "ADB root unavailable — installing as user app (home button uses accessibility service)." -ForegroundColor Yellow
 }
 
-# Determine whether the system partition can be made writable.
-# Tries /system first (separate partition), then / (system-as-root).
-$CanWriteSystem = $false
 if ($IsRooted) {
+
     Step "Remounting /system as writable"
     Adb "remount"
-    $CanWriteSystem = $true
     Start-Sleep -Seconds 2
-} elseif ($HasSu) {
-    Step "Remounting /system as writable"
-    foreach ($mp in @("/system", "/")) {
-        "mount -o rw,remount $mp" | & adb.exe shell su 0 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  Remounted $mp as writable."
-            $CanWriteSystem = $true
-            break
-        }
-    }
-    if (-not $CanWriteSystem) {
-        Write-Host "  Cannot remount system partition (dm-verity?) — falling back to user-app install." -ForegroundColor Yellow
-    }
-    Start-Sleep -Seconds 2
-}
-
-if ($CanWriteSystem) {
 
     # ── Install to priv-app ───────────────────────────────────────────────────
 
     Step "Installing APK to /system/priv-app/"
     # Remove existing APK first — overlayfs needs free space for the new file;
     # leaving the old file in place can cause "No space left on device".
-    SuShell "rm -rf /system/priv-app/QbicControl"
-    SuShell "mkdir -p /system/priv-app/QbicControl"
-    PushToSystem $Apk $PrivAppDst
-    SuShell "chmod 644 $PrivAppDst"
-    SuShell "chown root:root $PrivAppDst"
+    Adb "shell","rm","-rf","/system/priv-app/QbicControl"
+    Adb "shell","mkdir","-p","/system/priv-app/QbicControl"
+    Adb "push",$Apk,$PrivAppDst
+    Adb "shell","chmod","644",$PrivAppDst
+    Adb "shell","chown","root:root",$PrivAppDst
     Write-Host "Installed: $PrivAppDst"
 
     # ── privapp-permissions XML ───────────────────────────────────────────────
@@ -212,9 +164,9 @@ if ($CanWriteSystem) {
         Write-Host "privapp-permissions-qbiccontrol.xml not found: $PrivPermLocal" -ForegroundColor Red
         exit 1
     }
-    PushToSystem $PrivPermLocal $PrivPermDst
-    SuShell "chmod 644 $PrivPermDst"
-    SuShell "chown root:root $PrivPermDst"
+    Adb "push",$PrivPermLocal,$PrivPermDst
+    Adb "shell","chmod","644",$PrivPermDst
+    Adb "shell","chown","root:root",$PrivPermDst
     Write-Host "Written: $PrivPermDst"
 
     # ── sysconfig exceptions XML ──────────────────────────────────────────────
@@ -224,9 +176,9 @@ if ($CanWriteSystem) {
         Write-Host "qbiccontrol-permissions.xml not found: $SysConfigLocal" -ForegroundColor Red
         exit 1
     }
-    PushToSystem $SysConfigLocal $SysConfigDst
-    SuShell "chmod 644 $SysConfigDst"
-    SuShell "chown root:root $SysConfigDst"
+    Adb "push",$SysConfigLocal,$SysConfigDst
+    Adb "shell","chmod","644",$SysConfigDst
+    Adb "shell","chown","root:root",$SysConfigDst
     Write-Host "Written: $SysConfigDst"
 
     # ── Clear device admin before reboot ─────────────────────────────────────
@@ -235,7 +187,7 @@ if ($CanWriteSystem) {
     # reboot without hitting DELETE_FAILED_DEVICE_POLICY_MANAGER.
 
     Step "Clearing device admin state (device_policies.xml)"
-    SuShell "rm -f /data/system/device_policies.xml"
+    Adb "shell","rm","-f","/data/system/device_policies.xml"
     Write-Host "Device policies cleared — admin will be reset on reboot."
 
     # ── Reboot ────────────────────────────────────────────────────────────────

@@ -6,9 +6,11 @@
 #      SYSTEM_ALERT_WINDOW and INJECT_EVENTS survive APK updates and reboots
 #   3. Writes /system/etc/sysconfig/qbiccontrol-permissions.xml to exempt CAMERA
 #      from Android's automatic permission revocation
-#   4. Reboots and waits for the device to come back online
-#   5. Removes any user-installed copy that would shadow the system version
-#   6. Grants CAMERA, WRITE_SECURE_SETTINGS, SYSTEM_ALERT_WINDOW, GET_USAGE_STATS, and device admin
+#   4. Removes any user-installed copy before rebooting (prevents an Android 12 boot loop
+#      caused by PackageManagerService crashing on signature mismatch)
+#   5. Reboots and waits for the device to come back online
+#   6. Removes any remaining user-installed copy that would shadow the system version (safety net)
+#   7. Grants CAMERA, WRITE_SECURE_SETTINGS, SYSTEM_ALERT_WINDOW, GET_USAGE_STATS, and device admin
 #
 # Usage:
 #   .\commission_panel.ps1                                          # USB, auto-generated token
@@ -144,6 +146,24 @@ if ($IsRooted) {
     Step "Remounting /system as writable"
     Adb "remount"
     Start-Sleep -Seconds 2
+
+    # ── Preflight: remove any user-installed copy before pushing to priv-app ──
+    # Android 12's PackageManagerService crashes on boot when it finds a signature
+    # mismatch between the incoming priv-app and an existing /data/app entry — the
+    # post-reboot uninstall step below can never run if the device boot-loops first.
+    # Uninstall now, while PackageManager is healthy, to prevent this.
+
+    Step "Preflight: checking for existing user-installed copy"
+    $existingPath = & adb shell pm path $Package 2>$null
+    if ($existingPath -match "/data/app") {
+        Write-Host "User-installed copy found — uninstalling before priv-app install to prevent boot loop..." -ForegroundColor Yellow
+        # Clear device admin first; uninstall fails with INSTALL_FAILED_DEVICE_POLICY_MANAGER if active.
+        Adb "shell","rm","-f","/data/system/device_policies.xml"
+        Adb "uninstall",$Package
+        Write-Host "Uninstalled."
+    } else {
+        Write-Host "No user-installed copy — proceeding."
+    }
 
     # ── Install to priv-app ───────────────────────────────────────────────────
 
